@@ -116,19 +116,38 @@ fun DashboardScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
+            var searchQuery by remember { mutableStateOf("") }
+            
             Text(
                 text = "Recent Packets",
                 style = MaterialTheme.typography.titleMedium,
                 modifier = Modifier.align(Alignment.Start)
             )
             
+            OutlinedTextField(
+                value = searchQuery,
+                onValueChange = { searchQuery = it },
+                label = { Text("Filter by App Name (e.g., WhatsApp)") },
+                modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                singleLine = true
+            )
+            
+            val filteredPackets = if (searchQuery.isBlank()) {
+                recentPackets
+            } else {
+                recentPackets.filter { 
+                    it.appName?.contains(searchQuery, ignoreCase = true) == true ||
+                    it.protocol.contains(searchQuery, ignoreCase = true)
+                }
+            }
+            
             LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
-                if (recentPackets.isEmpty()) {
+                if (filteredPackets.isEmpty()) {
                     item {
-                        Text("No packets captured yet. Start the VPN adapter.", modifier = Modifier.padding(8.dp))
+                        Text(if (recentPackets.isEmpty()) "No packets captured yet. Start the VPN adapter." else "No matching packets found.", modifier = Modifier.padding(8.dp))
                     }
                 } else {
-                    items(recentPackets) { packet ->
+                    items(filteredPackets) { packet ->
                         PacketInfoItem(packet)
                     }
                 }

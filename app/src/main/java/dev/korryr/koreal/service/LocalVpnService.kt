@@ -79,20 +79,76 @@ class LocalVpnService : VpnService() {
         }
     }
 
-    private fun getUidForConnection(protocol: Int, srcIp: String, srcPort: Int, dstIp: String, dstPort: Int): Int {
+    private fun formatIpPortToHex(ip: String, port: Int): String {
+        val parts = ip.split(".")
+        if (parts.size != 4) return ""
+        return java.lang.String.format(java.util.Locale.US, "%02X%02X%02X%02X:%04X",
+            parts[3].toInt(), parts[2].toInt(), parts[1].toInt(), parts[0].toInt(),
+            port)
+    }
+
+    private fun getUidFromProcNet(protocol: Int, localIp: String, localPort: Int, remoteIp: String, remotePort: Int): Int {
+        val localHex = formatIpPortToHex(localIp, localPort)
+        val remoteHex = formatIpPortToHex(remoteIp, remotePort)
+        val portHex = java.lang.String.format(java.util.Locale.US, ":%04X", localPort)
+        val anyIpv4 = "00000000$portHex"
+        val anyIpv6 = "00000000000000000000000000000000$portHex"
+
+        val filesToSearch = if (protocol == 6) listOf("/proc/net/tcp", "/proc/net/tcp6") else listOf("/proc/net/udp", "/proc/net/udp6")
+
+        for (file in filesToSearch) {
+            try {
+                java.io.File(file).useLines { lines ->
+                    for (line in lines) {
+                        val trimmed = line.trim()
+                        if (trimmed.isEmpty() || trimmed.startsWith("sl")) continue
+
+                        val columns = trimmed.split("\\s+".toRegex())
+                        if (columns.size > 7) {
+                            val colLocal = columns[1]
+                            val colRemote = columns[2]
+
+                            if (colLocal == localHex || colLocal == anyIpv4 || colLocal == anyIpv6) {
+                                if (protocol == 6 && colRemote != remoteHex && colRemote != "00000000:0000") continue
+                                return columns[7].toIntOrNull() ?: android.os.Process.INVALID_UID
+                            }
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                // Ignore file read issues
+            }
+        }
+        return android.os.Process.INVALID_UID
+    }
+
+    private fun getUidForConnection(protocol: Int, localIp: String, localPort: Int, remoteIp: String, remotePort: Int): Int {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && (protocol == 6 || protocol == 17)) {
             val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
             val osProtocol = if (protocol == 6) OsConstants.IPPROTO_TCP else OsConstants.IPPROTO_UDP
             try {
-                return cm.getConnectionOwnerUid(
+                val uid = cm.getConnectionOwnerUid(
                     osProtocol,
-                    InetSocketAddress(srcIp, srcPort),
-                    InetSocketAddress(dstIp, dstPort)
+                    InetSocketAddress(localIp, localPort),
+                    InetSocketAddress(remoteIp, remotePort)
                 )
+                if (uid != android.os.Process.INVALID_UID) {
+                    Log.d(TAG, "getUidForConnection API 29+ $localIp:$localPort -> $remoteIp:$remotePort (Proto $osProtocol) returned $uid")
+                    return uid
+                }
             } catch (e: Exception) {
-                // Ignore SecurityException or other errors
+                Log.d(TAG, "getUidForConnection API 29+ error: ${e.message}")
             }
         }
+
+        // Fallback for Android 9 and older
+        if (protocol == 6 || protocol == 17) {
+            val procUid = getUidFromProcNet(protocol, localIp, localPort, remoteIp, remotePort)
+            if (procUid != android.os.Process.INVALID_UID) {
+                return procUid
+            }
+        }
+
         return android.os.Process.INVALID_UID
     }
 
