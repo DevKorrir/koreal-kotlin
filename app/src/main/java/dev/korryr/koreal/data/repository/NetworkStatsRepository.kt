@@ -69,18 +69,18 @@ class NetworkStatsRepository(private val context: Context) {
     private fun collectStats(networkType: Int, startTime: Long, endTime: Long, usageMap: MutableMap<Int, AppUsageRecord>) {
         try {
             val bucket = NetworkStats.Bucket()
-            val query = networkStatsManager.querySummary(networkType, null, startTime, endTime)
-            while (query.hasNextBucket()) {
-                query.getNextBucket(bucket)
-                val uid = bucket.uid
-                val rx = bucket.rxBytes
-                val tx = bucket.txBytes
+            networkStatsManager.querySummary(networkType, null, startTime, endTime).use { query ->
+                while (query.hasNextBucket()) {
+                    query.getNextBucket(bucket)
+                    val uid = bucket.uid
+                    val rx = bucket.rxBytes
+                    val tx = bucket.txBytes
 
-                val record = usageMap.getOrPut(uid) { AppUsageRecord() }
-                record.rxBytes += rx
-                record.txBytes += tx
+                    val record = usageMap.getOrPut(uid) { AppUsageRecord() }
+                    record.rxBytes += rx
+                    record.txBytes += tx
+                }
             }
-            query.close()
         } catch (e: SecurityException) {
             e.printStackTrace()
         } catch (e: RemoteException) {

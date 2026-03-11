@@ -9,6 +9,7 @@ import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -26,6 +27,9 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import dev.korryr.koreal.data.model.AppUsageStats
 import dev.korryr.koreal.data.model.NetworkPacketInfo
 import dev.korryr.koreal.service.LocalVpnService
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import dev.korryr.koreal.ui.viewmodel.NetworkMonitorViewModel
 import org.koin.androidx.compose.koinViewModel
 
@@ -38,8 +42,31 @@ fun DashboardScreen(
     val usageStats by viewModel.usageStats.collectAsState()
     val isVpnActive by viewModel.isVpnActive.collectAsState()
     val recentPackets by viewModel.recentPackets.collectAsState()
+    val error by viewModel.error.collectAsState()
+
+    val snackbarHostState = remember { SnackbarHostState() }
+
+    LaunchedEffect(error) {
+        error?.let {
+            snackbarHostState.showSnackbar(it)
+            viewModel.clearError()
+        }
+    }
 
     var hasUsagePermission by remember { mutableStateOf(hasUsageStatsPermission(context)) }
+    val lifecycleOwner = LocalLifecycleOwner.current
+
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                hasUsagePermission = hasUsageStatsPermission(context)
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose {
+            lifecycleOwner.lifecycle.removeObserver(observer)
+        }
+    }
 
     val vpnLauncher = rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         if (result.resultCode == android.app.Activity.RESULT_OK) {
@@ -57,7 +84,8 @@ fun DashboardScreen(
     Scaffold(
         topBar = {
             TopAppBar(title = { Text("Koreal Network Monitor") })
-        }
+        },
+        snackbarHost = { SnackbarHost(snackbarHostState) }
     ) { paddingValues ->
         Column(
             modifier = Modifier
@@ -159,7 +187,7 @@ fun DashboardScreen(
 private fun startVpnService(context: Context) {
     Intent(context, LocalVpnService::class.java).also { intent ->
         intent.action = LocalVpnService.ACTION_START
-        context.startService(intent)
+        ContextCompat.startForegroundService(context, intent)
     }
 }
 
@@ -217,15 +245,15 @@ fun AppUsageItem(stat: AppUsageStats) {
             }
             Column(horizontalAlignment = Alignment.End) {
                 Text(
-                    text = "${stat.totalBytes / 1024 / 1024} MB",
+                    text = "%.2f MB".format(stat.totalBytes / (1024.0 * 1024.0)),
                     style = MaterialTheme.typography.titleMedium
                 )
                 Text(
-                    text = "Rx: ${stat.totalBytesRecv / 1024 / 1024} MB",
+                    text = "Rx: %.2f MB".format(stat.totalBytesRecv / (1024.0 * 1024.0)),
                     style = MaterialTheme.typography.bodySmall
                 )
                 Text(
-                    text = "Tx: ${stat.totalBytesSent / 1024 / 1024} MB",
+                    text = "Tx: %.2f MB".format(stat.totalBytesSent / (1024.0 * 1024.0)),
                     style = MaterialTheme.typography.bodySmall
                 )
             }

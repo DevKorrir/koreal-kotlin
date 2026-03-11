@@ -1,5 +1,6 @@
 package dev.korryr.koreal.ui.viewmodel
 
+import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import dev.korryr.koreal.data.model.AppUsageStats
@@ -25,6 +26,13 @@ class NetworkMonitorViewModel(
     private val _recentPackets = MutableStateFlow<List<NetworkPacketInfo>>(emptyList())
     val recentPackets: StateFlow<List<NetworkPacketInfo>> = _recentPackets.asStateFlow()
 
+    private val _error = MutableStateFlow<String?>(null)
+    val error: StateFlow<String?> = _error.asStateFlow()
+
+    companion object {
+        private const val TAG = "NetworkMonitorViewModel"
+    }
+
     init {
         viewModelScope.launch {
             packetRepository.packetFlow.collect { packet ->
@@ -41,12 +49,18 @@ class NetworkMonitorViewModel(
 
     fun loadUsageStats() {
         viewModelScope.launch {
+            _error.value = null
             try {
                 _usageStats.value = networkStatsRepository.getUsageStatsForToday()
             } catch (e: Exception) {
-                e.printStackTrace()
+                Log.e(TAG, "Error loading usage stats", e)
+                _error.value = "Failed to load usage stats: ${e.message}"
             }
         }
+    }
+    
+    fun clearError() {
+        _error.value = null
     }
     
     fun setVpnState(active: Boolean) {

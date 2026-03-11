@@ -1,13 +1,21 @@
 package dev.korryr.koreal.service
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.net.ConnectivityManager
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.system.OsConstants
 import android.util.Log
+import androidx.core.app.NotificationCompat
+import dev.korryr.koreal.BuildConfig
+import dev.korryr.koreal.MainActivity
+import dev.korryr.koreal.R
 import dev.korryr.koreal.data.model.NetworkPacketInfo
 import dev.korryr.koreal.data.repository.PacketRepository
 import kotlinx.coroutines.*
@@ -26,18 +34,84 @@ class LocalVpnService : VpnService() {
         const val ACTION_START = "dev.korryr.koreal.START"
         const val ACTION_STOP = "dev.korryr.koreal.STOP"
         private const val TAG = "LocalVpnService"
+        private const val NOTIFICATION_CHANNEL_ID = "koreal_vpn_channel"
+        private const val NOTIFICATION_ID = 1
+        private const val UID_CACHE_TTL_MS = 5000L
+        private const val MAX_CACHE_SIZE = 1000
     }
+
+    private data class UidCacheKey(
+        val protocol: Int,
+        val localIp: String,
+        val localPort: Int,
+        val remoteIp: String,
+        val remotePort: Int
+    )
+
+    private data class CachedUid(
+        val uid: Int,
+        val timestamp: Long
+    )
+
+    private val uidCache = mutableMapOf<UidCacheKey, CachedUid>()
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_START -> startVpn()
             ACTION_STOP -> stopVpn()
+            null -> startVpn() // Handle system restart
         }
         return START_STICKY
     }
 
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                NOTIFICATION_CHANNEL_ID,
+                "Koreal VPN Monitor",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Running VPN Service to monitor network traffic"
+            }
+            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            manager.createNotificationChannel(channel)
+        }
+    }
+
+    private fun startForegroundService() {
+        createNotificationChannel()
+        
+        val pendingIntent: PendingIntent =
+            Intent(this, MainActivity::class.java).let { notificationIntent ->
+                PendingIntent.getActivity(
+                    this, 0, notificationIntent,
+                    PendingIntent.FLAG_IMMUTABLE
+                )
+            }
+
+        val notification = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
+            .setContentTitle("Koreal VPN is Active")
+            .setContentText("Monitoring network traffic...")
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentIntent(pendingIntent)
+            .setOngoing(true)
+            .build()
+            
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(
+                NOTIFICATION_ID, 
+                notification, 
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+            )
+        } else {
+            startForeground(NOTIFICATION_ID, notification)
+        }
+    }
+
     private fun startVpn() {
         if (vpnInterface != null) return
+        
+        startForegroundService()
         
         try {
             val builder = Builder()
@@ -123,33 +197,46 @@ class LocalVpnService : VpnService() {
     }
 
     private fun getUidForConnection(protocol: Int, localIp: String, localPort: Int, remoteIp: String, remotePort: Int): Int {
+        val cacheKey = UidCacheKey(protocol, localIp, localPort, remoteIp, remotePort)
+        val currentTime = System.currentTimeMillis()
+        
+        // 1. Check Cache
+        uidCache[cacheKey]?.let { cached ->
+            if (currentTime - cached.timestamp < UID_CACHE_TTL_MS) {
+                return cached.uid
+            }
+        }
+
+        // 2. Perform Lookup
+        var uid = android.os.Process.INVALID_UID
+        
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && (protocol == 6 || protocol == 17)) {
             val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
             val osProtocol = if (protocol == 6) OsConstants.IPPROTO_TCP else OsConstants.IPPROTO_UDP
             try {
-                val uid = cm.getConnectionOwnerUid(
+                uid = cm.getConnectionOwnerUid(
                     osProtocol,
                     InetSocketAddress(localIp, localPort),
                     InetSocketAddress(remoteIp, remotePort)
                 )
-                if (uid != android.os.Process.INVALID_UID) {
-                    Log.d(TAG, "getUidForConnection API 29+ $localIp:$localPort -> $remoteIp:$remotePort (Proto $osProtocol) returned $uid")
-                    return uid
-                }
             } catch (e: Exception) {
                 Log.d(TAG, "getUidForConnection API 29+ error: ${e.message}")
             }
         }
 
-        // Fallback for Android 9 and older
-        if (protocol == 6 || protocol == 17) {
-            val procUid = getUidFromProcNet(protocol, localIp, localPort, remoteIp, remotePort)
-            if (procUid != android.os.Process.INVALID_UID) {
-                return procUid
-            }
+        if (uid == android.os.Process.INVALID_UID && (protocol == 6 || protocol == 17)) {
+            // Fallback for Android 9 and older OR if API 29+ fails
+            uid = getUidFromProcNet(protocol, localIp, localPort, remoteIp, remotePort)
         }
 
-        return android.os.Process.INVALID_UID
+        // 3. Update Cache & Prune if necessary
+        if (uidCache.size >= MAX_CACHE_SIZE) {
+            val oldestAllowed = currentTime - UID_CACHE_TTL_MS
+            uidCache.entries.removeIf { it.value.timestamp < oldestAllowed }
+        }
+        
+        uidCache[cacheKey] = CachedUid(uid, currentTime)
+        return uid
     }
 
     private suspend fun CoroutineScope.processPackets(vpnInterface: ParcelFileDescriptor) {
@@ -159,11 +246,11 @@ class LocalVpnService : VpnService() {
         while (isActive) {
             try {
                 val read = inputStream.read(packet.array())
-                if (read > 0) {
+                if (read >= 1) {
                     val buffer = packet.array()
                     val version = (buffer[0].toInt() shr 4) and 0x0F
                     
-                    if (version == 4) { // IPv4
+                    if (version == 4 && read >= 20) { // IPv4
                         val protocol = buffer[9].toInt() and 0xFF
                         val protocolName = when (protocol) {
                             6 -> "TCP"
@@ -198,7 +285,9 @@ class LocalVpnService : VpnService() {
                             }
                         }
                         
-                        Log.d(TAG, "Intercepted IPv4 Packet: $sourceAddress -> $destAddress ($protocolName) app: $appName")
+                        if (BuildConfig.DEBUG) {
+                            Log.d(TAG, "Intercepted IPv4 Packet: $sourceAddress -> $destAddress ($protocolName) app: $appName")
+                        }
                         packetRepository.emitPacket(
                             NetworkPacketInfo(
                                 sourceIp = sourceAddress,
@@ -209,8 +298,8 @@ class LocalVpnService : VpnService() {
                                 appName = appName
                             )
                         )
-                    } else if (version == 6) { // IPv6
-                        Log.d(TAG, "Intercepted IPv6 Packet")
+                    } else if (version == 6 && read >= 40) { // IPv6
+                        // Skip noisy logging for IPv6 placeholder
                     }
                     
                     packet.clear()
