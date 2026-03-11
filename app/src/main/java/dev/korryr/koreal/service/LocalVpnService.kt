@@ -4,7 +4,10 @@ import android.content.Intent
 import android.net.VpnService
 import android.os.ParcelFileDescriptor
 import android.util.Log
+import dev.korryr.koreal.data.model.NetworkPacketInfo
+import dev.korryr.koreal.data.repository.PacketRepository
 import kotlinx.coroutines.*
+import org.koin.android.ext.android.inject
 import java.io.FileInputStream
 import java.nio.ByteBuffer
 

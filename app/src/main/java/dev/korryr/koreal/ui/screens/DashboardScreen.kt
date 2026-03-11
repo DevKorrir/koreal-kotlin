@@ -21,6 +21,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.drawable.toBitmap
 import dev.korryr.koreal.data.model.AppUsageStats
+import dev.korryr.koreal.data.model.NetworkPacketInfo
 import dev.korryr.koreal.service.LocalVpnService
 import dev.korryr.koreal.ui.viewmodel.NetworkMonitorViewModel
 import org.koin.androidx.compose.koinViewModel
@@ -33,6 +34,7 @@ fun DashboardScreen(
     val context = LocalContext.current
     val usageStats by viewModel.usageStats.collectAsState()
     val isVpnActive by viewModel.isVpnActive.collectAsState()
+    val recentPackets by viewModel.recentPackets.collectAsState()
 
     var hasUsagePermission by remember { mutableStateOf(hasUsageStatsPermission(context)) }
 
@@ -91,20 +93,40 @@ fun DashboardScreen(
                     Text("Grant Permission")
                 }
             } else {
-                Text(
-                    text = "Today's Data Usage",
-                    style = MaterialTheme.typography.titleMedium,
-                    modifier = Modifier.align(Alignment.Start)
-                )
-                Button(
-                    onClick = { viewModel.loadUsageStats() }
-                ) {
-                    Text("Refresh Usage Data")
+                if (usageStats.isNotEmpty()) {
+                    Text(
+                        text = "Today's Data Usage",
+                        style = MaterialTheme.typography.titleMedium,
+                        modifier = Modifier.align(Alignment.Start)
+                    )
+                    Button(onClick = { viewModel.loadUsageStats() }) {
+                        Text("Refresh Usage Data")
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                        items(usageStats) { stat ->
+                            AppUsageItem(stat)
+                        }
+                    }
                 }
-                Spacer(modifier = Modifier.height(8.dp))
-                LazyColumn(modifier = Modifier.fillMaxSize()) {
-                    items(usageStats) { stat ->
-                        AppUsageItem(stat)
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+
+            Text(
+                text = "Recent Packets",
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.align(Alignment.Start)
+            )
+            
+            LazyColumn(modifier = Modifier.fillMaxWidth().weight(1f)) {
+                if (recentPackets.isEmpty()) {
+                    item {
+                        Text("No packets captured yet. Start the VPN adapter.", modifier = Modifier.padding(8.dp))
+                    }
+                } else {
+                    items(recentPackets) { packet ->
+                        PacketInfoItem(packet)
                     }
                 }
             }
@@ -185,6 +207,29 @@ fun AppUsageItem(stat: AppUsageStats) {
                     style = MaterialTheme.typography.bodySmall
                 )
             }
+        }
+    }
+}
+
+@Composable
+fun PacketInfoItem(packet: NetworkPacketInfo) {
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 4.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(modifier = Modifier.padding(12.dp).fillMaxWidth()) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(text = "Protocol: ${packet.protocol}", style = MaterialTheme.typography.labelMedium)
+                Text(text = "Time: ${packet.timestampMs}", style = MaterialTheme.typography.labelSmall)
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(text = "Src: ${packet.sourceIp}", style = MaterialTheme.typography.bodyMedium)
+            Text(text = "Dst: ${packet.destinationIp}", style = MaterialTheme.typography.bodyMedium)
         }
     }
 }
