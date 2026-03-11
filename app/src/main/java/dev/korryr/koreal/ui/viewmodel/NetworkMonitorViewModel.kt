@@ -32,7 +32,7 @@ class NetworkMonitorViewModel(
                 val currentList = _recentPackets.value.toMutableList()
                 currentList.add(0, packet) // Add to top
                 if (currentList.size > 50) {
-                    currentList.removeLast()
+                    currentList.removeAt(currentList.lastIndex)
                 }
                 _recentPackets.value = currentList
             }

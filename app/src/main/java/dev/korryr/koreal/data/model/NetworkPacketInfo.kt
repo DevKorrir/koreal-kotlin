@@ -7,5 +7,8 @@ data class NetworkPacketInfo(
     val sourceIp: String,
     val destinationIp: String,
     val protocol: String,
-    val timestampMs: Long = System.currentTimeMillis()
+    val timestampMs: Long = System.currentTimeMillis(),
+    val isOutbound: Boolean = true,
+    val uid: Int? = null,
+    val appName: String? = null
 )

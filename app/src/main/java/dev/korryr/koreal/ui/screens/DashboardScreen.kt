@@ -20,6 +20,9 @@ import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.graphics.drawable.toBitmap
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import dev.korryr.koreal.data.model.AppUsageStats
 import dev.korryr.koreal.data.model.NetworkPacketInfo
 import dev.korryr.koreal.service.LocalVpnService
@@ -222,14 +225,35 @@ fun PacketInfoItem(packet: NetworkPacketInfo) {
         Column(modifier = Modifier.padding(12.dp).fillMaxWidth()) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = if (packet.isOutbound) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                        contentDescription = if (packet.isOutbound) "Outbound" else "Inbound",
+                        modifier = Modifier.size(16.dp),
+                        tint = if (packet.isOutbound) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.secondary
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = packet.appName ?: "Unknown App",
+                        style = MaterialTheme.typography.titleMedium
+                    )
+                }
+                Text(
+                    text = java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date(packet.timestampMs)),
+                    style = MaterialTheme.typography.labelSmall
+                )
+            }
+            Spacer(modifier = Modifier.height(4.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 Text(text = "Protocol: ${packet.protocol}", style = MaterialTheme.typography.labelMedium)
-                Text(text = "Time: ${packet.timestampMs}", style = MaterialTheme.typography.labelSmall)
+                Text(text = if (packet.isOutbound) "Dst: ${packet.destinationIp}" else "Src: ${packet.sourceIp}", style = MaterialTheme.typography.bodyMedium)
             }
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(text = "Src: ${packet.sourceIp}", style = MaterialTheme.typography.bodyMedium)
-            Text(text = "Dst: ${packet.destinationIp}", style = MaterialTheme.typography.bodyMedium)
         }
     }
 }
